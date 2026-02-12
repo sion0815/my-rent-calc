@@ -1,115 +1,79 @@
 import streamlit as st
-import pandas as pd
 
-# --- [설정 단계] 실제 렌트사 운영 데이터 (이 부분을 나중에 엑셀 등으로 연동 가능) ---
-VEHICLE_DATA = {
-    "현대": {
-        "아반떼": {
-            "하이브리드": {
-                "스마트": {"price": 24730000, "options": {"네비게이션": 1500000, "선루프": 500000}},
-                "인스퍼레이션": {"price": 28220000, "options": {"선루프": 500000, "빌트인캠": 700000}}
-            }
-        },
-        "그랜저": {
-            "가솔린 2.5": {
-                "프리미엄": {"price": 37680000, "options": {"HUD": 1000000}},
-            }
-        }
-    }
+# --- [초기 설정] 엑셀 '수치' 탭의 주요 상수 ---
+TAX_RATE = 0.07  # 취득세율
+INSURANCE_DATA = {
+    "만 26세 이상": {"1억": 850000, "2억": 870000, "3억": 900000},
+    "만 21세 이상": {"1억": 1200000, "2억": 1250000, "3억": 1300000}
 }
+MAINTENANCE_FEE = 15000  # 월 관리비(인건비 등)
 
-# 기간 및 거리별 잔존가치 테이블 (예시: 48개월/2만km 일 때 60%)
-RV_TABLE = {
-    48: {"1만km": 62, "2만km": 60, "3만km": 55},
-    60: {"1만km": 55, "2만km": 53, "3만km": 48}
-}
+st.set_page_config(page_title="장기렌트 손익분석 시스템", layout="wide")
 
-# --- [메인 로직] ---
-st.set_page_config(page_title="레드캡렌터카 견적시스템", layout="wide")
-st.title(" 레드캡렌터카 상세 견적서")
-
-# 사이드바: 차량 선택 섹션
+# 사이드바: 엑셀의 'DATA' 탭 역할 (입력부)
 with st.sidebar:
-    st.header("1. 차량 정보 선택")
-    maker = st.selectbox("메이커", list(VEHICLE_DATA.keys()))
-    model = st.selectbox("차종", list(VEHICLE_DATA[maker].keys()))
-    fuel = st.selectbox("연료", list(VEHICLE_DATA[maker][model].keys()))
-    trim = st.selectbox("트림", list(VEHICLE_DATA[maker][model][fuel].keys()))
-    
-    selected_v = VEHICLE_DATA[maker][model][fuel][trim]
-    base_price = selected_v["price"]
-    
-    # 옵션 다중 선택
-    options = st.multiselect("추가 옵션", list(selected_v["options"].keys()))
-    option_price = sum([selected_v["options"][opt] for opt in options])
-    
-    total_car_price = base_price + option_price
+    st.header("🛒 차량 및 옵션 선택")
+    maker = st.selectbox("메이커", ["현대", "기아", "제네시스", "수입차"])
+    raw_price = st.number_input("차량 출고가 (VAT포함)", value=30000000, step=10000)
+    discount = st.number_input("차량 할인액 (-)", value=0)
+    consignment = st.number_input("탁송료 (+)", value=250000)
 
-# 메인 화면: 계약 및 금융 조건
-col1, col2 = st.columns(2)
+    st.header("⚙️ 계약 및 보험")
+    period = st.selectbox("이용기간", [24, 36, 48, 60], index=2)
+    mileage = st.selectbox("약정거리 (연)", ["1만", "2만", "3만", "4만"])
+    age = st.radio("보험연령", ["만 26세 이상", "만 21세 이상"])
+    liability = st.selectbox("대물한도", ["1억", "2억", "3억"])
 
+# 메인 화면: 계산 로직
+st.title("📊 장기렌트 원가 및 손익 분석 견적")
+
+# 1. 면세가 및 취득원가 계산 (엑셀 로직 반영)
+supply_price = (raw_price - discount) / 1.1 # 면세가 추정
+total_acquisition = supply_price + consignment # 취득원가
+
+# 2. 잔존가치 자동 설정 (기간/거리별)
+rv_rates = {48: {"1만": 0.60, "2만": 0.58, "3만": 0.55}, 60: {"1만": 0.55, "2만": 0.50, "3만": 0.45}}
+rv_rate = rv_rates.get(period, {}).get(mileage, 0.40)
+rv_amount = supply_price * rv_rate
+
+# 3. 금융 조건 (에이전트 수수료 포함)
+st.subheader("💰 금융 및 수수료 설정")
+col1, col2, col3 = st.columns(3)
 with col1:
-    st.subheader("🗓 계약 조건")
-    period = st.radio("이용기간", [24, 36, 48, 60], index=2, horizontal=True)
-    mileage = st.selectbox("약정거리", ["1만km", "1.5만km", "2만km", "2.5만km", "3만km", "4만km"])
-    
-    st.subheader("🛡 보험 및 서비스")
-    age = st.radio("보험 연령", ["만 26세 이상", "만 21세 이상"], horizontal=True)
-    liability = st.select_slider("대물보험 한도", options=["1억", "2억", "3억"])
-    deductible = st.text_input("면책금", value="30만원", disabled=True)
-
+    prepay_p = st.selectbox("선수금 (%)", [0, 10, 20, 30, 40], index=0)
 with col2:
-    st.subheader("💰 금융 조건")
-    prepay_p = st.selectbox("선수금 (%)", [0, 10, 20, 30, 40, "직접입력"])
-    if prepay_p == "직접입력":
-        prepay_amt = st.number_input("선수금 금액(원)", value=0)
-    else:
-        prepay_amt = total_car_price * (prepay_p / 100)
-        
-    deposit_p = st.selectbox("보증금 (%)", [0, 10, 20, 30, 40, "직접입력"])
-    if deposit_p == "직접입력":
-        deposit_amt = st.number_input("보증금 금액(원)", value=0)
-    else:
-        deposit_amt = total_car_price * (deposit_p / 100)
+    deposit_p = st.selectbox("보증금 (%)", [0, 10, 20, 30, 40], index=0)
+with col3:
+    agent_fee_p = st.slider("에이전트 수수료 (%)", 1, 6, 2)
 
-    fee_rate = st.select_slider("에이전트 수수료 (%)", options=[1, 2, 3, 4, 5, 6], value=2)
+# 선수금 및 보증금 계산
+prepay_amt = total_acquisition * (prepay_p / 100)
+deposit_amt = total_acquisition * (deposit_p / 100)
 
-# --- 정교한 계산 엔진 (수식 반영) ---
-# 1. 잔가 자동 적용
-rv_rate = RV_TABLE.get(period, {}).get(mileage, 45) / 100
-rv_amt = total_car_price * rv_rate
+# 4. 월 렌트료 산출 (원가 + 보험 + 세금 + 마진)
+annual_interest = 0.05 + (agent_fee_p / 100) # 기본금리 + 수수료
+monthly_ins = INSURANCE_DATA[age][liability] / 12
+monthly_tax = (total_acquisition * 0.005) # 간이 자동차세 로직
 
-# 2. 세금 및 비용 (면세가, 특소세 등 간이 반영)
-tax_benefit = total_car_price * 0.05 # 하이브리드/전기차 감면액 예시
-final_calc_price = total_car_price - tax_benefit
+# 원리금 균등 상환 방식 적용
+principal = total_acquisition - prepay_amt - (rv_amount / (1 + (annual_interest/12))**period)
+monthly_fund = (principal * (annual_interest/12)) / (1 - (1 + (annual_interest/12))**-period)
+final_monthly_rent = int((monthly_fund + monthly_ins + monthly_tax + MAINTENANCE_FEE) * 1.1)
 
-# 3. 월 렌트료 산출 (이자율 + 보험료 + 자동차세 + 관리비 포함)
-# 실제 렌트료는 (취득원가 - 잔가)에 대한 원금상환액 + 이자 + 보험료로 구성됩니다.
-interest_rate = 0.07 + (fee_rate / 100) # 기본이율 7% + 수수료 가산
-monthly_interest = interest_rate / 12
-
-# (단순화된 렌트료 공식)
-principal = final_calc_price - prepay_amt - (rv_amt / (1 + monthly_interest)**period)
-monthly_rent = (principal * monthly_interest * (1 + monthly_interest)**period) / ((1 + monthly_interest)**period - 1)
-
-# --- 견적서 출력 (첨부 이미지 스타일) ---
+# --- 결과 출력 ---
 st.divider()
-st.header(f"{maker} {model} {fuel} 견적서")
-st.write(f"날짜: 2026-02-12")
+c_res1, c_res2 = st.columns([1, 1])
 
-res_col1, res_col2 = st.columns([2, 1])
+with c_res1:
+    st.info("### 최종 월 납입액 (VAT포함)")
+    st.write(f"## {final_monthly_rent:,} 원")
 
-with res_col1:
-    st.table(pd.DataFrame({
-        "항목": ["출고가(계산서가)", "합계 금액", "보증금", "선수금", "약정거리", "잔존가치"],
-        "내용": [f"{total_car_price:,} 원", f"{final_calc_price:,} 원", 
-                f"{deposit_amt:,} 원 ({deposit_p}%)", f"{prepay_amt:,} 원 ({prepay_p}%)",
-                f"{mileage}/연", f"{rv_rate*100}% / {int(rv_amt):,} 원"]
-    }))
+with c_res2:
+    st.warning("### 만기 인수금 (잔존가치)")
+    st.write(f"## {int(rv_amount)::,} 원")
 
-with res_col2:
-    st.metric(label="월 납입액 (VAT 포함)", value=f"{int(monthly_rent):,} 원")
-    st.info(f"인수 총 비용: {int(monthly_rent * period + rv_amt + prepay_amt):,} 원")
-
-st.button("PDF로 저장하기 (준비중)")
-
+st.table({
+    "구분": ["공급가액(면세)", "취득원가", "선수금액", "보증금액", "보험조건", "에이전트 수수료"],
+    "상세 내용": [f"{int(supply_price):,}원", f"{int(total_acquisition):,}원", f"{int(prepay_amt):,}원", 
+              f"{int(deposit_amt):,}원", f"{age} / 대물 {liability}", f"{agent_fee_p}% 포함"]
+})
