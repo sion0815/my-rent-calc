@@ -25,8 +25,8 @@ RV_TABLE = {
 }
 
 # --- [메인 로직] ---
-st.set_page_config(page_title="전문가용 장기렌트 견적시스템", layout="wide")
-st.title("📑 전문가용 장기렌트 상세 견적서")
+st.set_page_config(page_title="레드캡렌터카 견적시스템", layout="wide")
+st.title(" 레드캡렌터카 상세 견적서")
 
 # 사이드바: 차량 선택 섹션
 with st.sidebar:
@@ -112,3 +112,4 @@ with res_col2:
     st.info(f"인수 총 비용: {int(monthly_rent * period + rv_amt + prepay_amt):,} 원")
 
 st.button("PDF로 저장하기 (준비중)")
+
